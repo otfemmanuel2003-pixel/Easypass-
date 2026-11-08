@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>EasyPass | Admin</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header><nav class="nav"><a class="brand" href="index.html">Easy<span>Pass</span> Admin</a><div class="navlinks"><a href="index.html">View site</a></div></nav></header>
+  <main class="container">
+    <section id="loginCard" class="card" style="max-width:520px;margin:30px auto">
+      <h2>🔐 Admin Login</h2>
+      <p class="small">Only the account you add to the <code>admin_users</code> table can manage resources.</p>
+      <div id="loginMsg" class="message"></div>
+      <form id="loginForm" class="form">
+        <label>Email<input id="email" type="email" required></label>
+        <label>Password<input id="password" type="password" required></label>
+        <button class="btn" type="submit">Sign in</button>
+      </form>
+    </section>
+
+    <section id="dashboard" hidden>
+      <div class="adminbar"><div><h1 style="margin:0">EasyPass Dashboard</h1><div class="small" id="adminEmail"></div></div><button id="logout" class="delete">Sign out</button></div>
+      <div class="grid2">
+        <section class="card">
+          <h2>Upload a Resource</h2>
+          <div id="uploadMsg" class="message"></div>
+          <form id="uploadForm" class="form">
+            <label>Title<input id="title" required placeholder="e.g. Level 100 Mathematics Past Questions"></label>
+            <label>Level<select id="uploadLevel" required><option value="">Choose level</option><option>Level 100</option><option>Level 200</option><option>Level 300</option><option>Level 400</option></select></label>
+            <label>Type<select id="uploadType" required><option>Past Questions</option><option>Study Notes</option><option>Lecture Slides</option><option>Other</option></select></label>
+            <label>Subject / Course<input id="subject" placeholder="e.g. Educational Psychology"></label>
+            <label>Year<input id="year" placeholder="e.g. 2025"></label>
+            <label>File<input id="file" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx" required></label>
+            <button class="btn" type="submit">⬆ Upload & Publish</button>
+          </form>
+        </section>
+        <section class="card">
+          <h2>How it works</h2>
+          <ol>
+            <li>Select a file and enter its details.</li>
+            <li>EasyPass uploads the file to Supabase Storage.</li>
+            <li>The resource information is saved in the database.</li>
+            <li>Students immediately see it on the homepage and can download it for free.</li>
+          </ol>
+          <p class="small">Keep your admin password private. Never put a Supabase secret/service-role key in this website.</p>
+        </section>
+      </div>
+
+      <section class="card" style="margin-top:20px">
+        <h2>Published Resources</h2>
+        <div id="adminList" class="table-wrap"></div>
+      </section>
+    </section>
+  </main>
+  <footer>EasyPass Admin</footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script>
+    const loginCard=document.getElementById("loginCard"), dashboard=document.getElementById("dashboard");
+    const loginMsg=document.getElementById("loginMsg"), uploadMsg=document.getElementById("uploadMsg");
+    const fileInput=document.getElementById("file");
+
+    function message(el,text,ok=false){el.textContent=text;el.className="message show "+(ok?"success":"error");}
+    function clearMessage(el){el.className="message";el.textContent="";}
+
+    async function isAdmin(){
+      const {data:{user}}=await supabaseClient.auth.getUser();
+      if(!user){showLogin();return false;}
+      const {data,error}=await supabaseClient.from("admin_users").select("user_id").eq("user_id",user.id).maybeSingle();
+      if(error || !data){await supabaseClient.auth.signOut();message(loginMsg,"This account is not an EasyPass administrator.");showLogin();return false;}
+      document.getElementById("adminEmail").textContent=user.email;
+      loginCard.hidden=true;dashboard.hidden=false;loadAdminList();return true;
+    }
+    function showLogin(){loginCard.hidden=false;dashboard.hidden=true;}
+
+    document.getElementById("loginForm").addEventListener("submit",async e=>{
+      e.preventDefault();clearMessage(loginMsg);
+      const {error}=await supabaseClient.auth.signInWithPassword({
+        email:document.getElementById("email").value,password:document.getElementById("password").value
+      });
+      if(error){message(loginMsg,error.message);return;} await isAdmin();
+    });
+
+    document.getElementById("logout").addEventListener("click",async()=>{await supabaseClient.auth.signOut();showLogin();});
+    supabaseClient.auth.onAuthStateChange(()=>{setTimeout(isAdmin,0);});
+
+    document.getElementById("uploadForm").addEventListener("submit",async e=>{
+      e.preventDefault();clearMessage(uploadMsg);
+      const file=fileInput.files[0]; if(!file){message(uploadMsg,"Choose a file.");return;}
+      if(file.size > 50*1024*1024){message(uploadMsg,"This starter limits uploads to 50 MB.");return;}
+      const safe=file.name.toLowerCase().replace(/[^a-z0-9._-]/g,"-");
+      const path=`${Date.now()}-${crypto.randomUUID()}-${safe}`;
+
+      const {error:uploadError}=await supabaseClient.storage.from(STORAGE_BUCKET).upload(path,file,{upsert:false});
+      if(uploadError){message(uploadMsg,"File upload failed: "+uploadError.message);return;}
+
+      const {data:urlData}=supabaseClient.storage.from(STORAGE_BUCKET).getPublicUrl(path);
+      const {error:dbError}=await supabaseClient.from("resources").insert({
+        title:document.getElementById("title").value.trim(),
+        level:document.getElementById("uploadLevel").value,
+        type:document.getElementById("uploadType").value,
+        subject:document.getElementById("subject").value.trim() || null,
+        year:document.getElementById("year").value.trim() || null,
+        file_url:urlData.publicUrl,
+        storage_path:path
+      });
+      if(dbError){
+        await supabaseClient.storage.from(STORAGE_BUCKET).remove([path]);
+        message(uploadMsg,"Database save failed: "+dbError.message);return;
+      }
+      e.target.reset();message(uploadMsg,"Resource uploaded successfully.",true);loadAdminList();
+    });
+
+    async function loadAdminList(){
+      const box=document.getElementById("adminList");box.innerHTML="Loading...";
+      const {data,error}=await supabaseClient.from("resources").select("*").order("created_at",{ascending:false});
+      if(error){box.textContent=error.message;return;}
+      if(!data.length){box.innerHTML='<div class="empty">No resources yet.</div>';return;}
+      box.innerHTML=`<table class="table"><thead><tr><th>Title</th><th>Level</th><th>Type</th><th>Action</th></tr></thead><tbody>${
+        data.map(r=>`<tr><td>${escapeHtml(r.title)}</td><td>${escapeHtml(r.level)}</td><td>${escapeHtml(r.type)}</td><td><button class="delete" data-delete="${r.id}" data-path="${escapeHtml(r.storage_path)}">Delete</button></td></tr>`).join("")
+      }</tbody></table>`;
+      document.querySelectorAll("[data-delete]").forEach(b=>b.addEventListener("click",()=>deleteResource(b.dataset.delete,b.dataset.path)));
+    }
+
+    async function deleteResource(id,path){
+      if(!confirm("Delete this resource?"))return;
+      const {error:dbError}=await supabaseClient.from("resources").delete().eq("id",id);
+      if(dbError){alert(dbError.message);return;}
+      if(path) await supabaseClient.storage.from(STORAGE_BUCKET).remove([path]);
+      loadAdminList();
+    }
+    function escapeHtml(s){return String(s??"").replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));}
+    isAdmin();
+  </script>
+</body>
+</html>

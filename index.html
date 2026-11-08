@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="EasyPass College of Education resources and past questions.">
+  <title>EasyPass | College of Education Resources</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="topbar"><span>🎓 Learn • Prepare • Excel</span><span>Free student downloads</span></div>
+  <header>
+    <nav class="nav">
+      <a class="brand" href="index.html">Easy<span>Pass</span></a>
+      <div class="navlinks">
+        <a href="index.html">Home</a><a href="#resources">Resources</a>
+        <a href="admin.html">Admin</a>
+      </div>
+    </nav>
+  </header>
+
+  <section class="hero">
+    <div class="hero-inner">
+      <div class="eyebrow">College of Education Resource Hub</div>
+      <h1>Study smarter with <span style="color:#49a0ff">EasyPass</span>.</h1>
+      <p>Access educational resources, study notes and past questions for Levels 100–400. All student downloads are free.</p>
+      <a class="btn secondary" href="#resources">Browse Resources ↓</a>
+    </div>
+  </section>
+
+  <main class="container" id="resources">
+    <div class="panel">
+      <div class="panel-head">📚 Resources & Past Questions</div>
+      <div class="filters">
+        <input id="search" placeholder="Search title, subject or course...">
+        <select id="level"><option value="">All levels</option><option>Level 100</option><option>Level 200</option><option>Level 300</option><option>Level 400</option></select>
+        <select id="type"><option value="">All types</option><option>Past Questions</option><option>Study Notes</option><option>Lecture Slides</option><option>Other</option></select>
+      </div>
+      <div id="resourceList"><div class="empty">Loading resources...</div></div>
+    </div>
+  </main>
+
+  <footer><div>© <span id="year"></span> EasyPass</div><div class="small">Study Smart. Achieve More.</div></footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script>
+    const list = document.getElementById("resourceList");
+    const search = document.getElementById("search");
+    const level = document.getElementById("level");
+    const type = document.getElementById("type");
+    let resources = [];
+
+    function render(){
+      const q = search.value.trim().toLowerCase();
+      const rows = resources.filter(r =>
+        (!q || `${r.title} ${r.subject||""} ${r.course||""} ${r.type} ${r.level}`.toLowerCase().includes(q)) &&
+        (!level.value || r.level === level.value) &&
+        (!type.value || r.type === type.value)
+      );
+      if(!rows.length){ list.innerHTML = '<div class="empty">No resources found.</div>'; return; }
+      list.innerHTML = rows.map(r => `
+        <article class="resource">
+          <div class="pdf">PDF</div>
+          <div class="info">
+            <strong>${escapeHtml(r.title)}</strong>
+            <div class="meta">${escapeHtml(r.level)} • ${escapeHtml(r.type)} • ${escapeHtml(r.year || "")}${r.subject ? " • "+escapeHtml(r.subject) : ""}</div>
+          </div>
+          <button class="download" data-id="${r.id}">⬇ Download</button>
+        </article>`).join("");
+      document.querySelectorAll(".download").forEach(btn => btn.addEventListener("click", () => {
+        const r = resources.find(x => x.id === btn.dataset.id);
+        if(r) window.open(r.file_url, "_blank", "noopener");
+      }));
+    }
+
+    function escapeHtml(s){
+      return String(s ?? "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+    }
+
+    async function loadResources(){
+      const {data,error} = await supabaseClient.from("resources")
+        .select("id,title,level,type,subject,course,year,file_url,created_at")
+        .order("created_at",{ascending:false});
+      if(error){
+        list.innerHTML = `<div class="empty">Could not load resources. Check your Supabase settings.<br><small>${escapeHtml(error.message)}</small></div>`;
+        return;
+      }
+      resources = data || []; render();
+    }
+    [search,level,type].forEach(x=>x.addEventListener("input",render));
+    document.getElementById("year").textContent = new Date().getFullYear();
+    loadResources();
+  </script>
+</body>
+</html>
